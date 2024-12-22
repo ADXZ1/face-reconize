@@ -45,6 +45,20 @@ def compare_features(current_feature, stored_features, threshold=0.95):
             return True
     return False
 
+def log_process(image):
+    # 高斯模糊
+    blurred = cv2.GaussianBlur(image, (5, 5), 0)
+    # 拉普拉斯算子（对灰度图操作）
+    gray = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+    log_image = cv2.Laplacian(gray, cv2.CV_64F)
+    # 转换为可显示的8位图像
+    enhanced_image = cv2.convertScaleAbs(log_image)
+    # 转换为三通道图像q
+    enhanced_image_color = cv2.cvtColor(enhanced_image, cv2.COLOR_GRAY2BGR)
+    # 将增强结果与原始图像叠加
+    blended = cv2.addWeighted(image, 0.7, enhanced_image_color, 0.3, 0)
+    return blended
+
 # 打开摄像头
 cap = cv2.VideoCapture(0)
 
@@ -61,7 +75,10 @@ while True:
     # 获取图像尺寸
     (h, w) = frame.shape[:2]
 
-    # 预处理帧以输入到 DNN 模型
+    # 高斯拉普拉斯增强处理
+    enhanced_frame = log_process(frame)
+
+    # 使用原始帧进行人脸检测
     blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0,
                                  (300, 300), (104.0, 177.0, 123.0))
     net.setInput(blob)
@@ -70,13 +87,11 @@ while True:
     found_face = False
     rect = None
 
-    # 遍历检测到的人脸
     for i in range(0, detections.shape[2]):
         confidence = detections[0, 0, i, 2]
-        if confidence > 0.5:  # 调整阈值可控制检测精度
+        if confidence > 0.95:  # 调整阈值
             box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
             (startX, startY, endX, endY) = box.astype("int")
-            print(f"Face detected: startX={startX}, startY={startY}, endX={endX}, endY={endY}")
             rect = dlib.rectangle(startX, startY, endX, endY)
             found_face = True
             break
@@ -93,22 +108,21 @@ while True:
         stored_features = load_features()
 
         # 比对特征
-        if compare_features(current_feature, stored_features):
-            label = "Known"
-        else:
-            label = "Unknown"
+        label = "Known" if compare_features(current_feature, stored_features) else "Unknown"
 
         # 在图像上绘制矩形框和标签
-        frame = cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 255, 0), 2)
-        frame = cv2.putText(frame, label, (startX, startY - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        enhanced_frame = cv2.rectangle(enhanced_frame, (startX, startY), (endX, endY), (0, 255, 0), 2)
+        enhanced_frame = cv2.putText(enhanced_frame, label, (startX, startY - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
         # 按下 's' 键保存特征值
-        if label == "Unknown" and cv2.waitKey(1) & 0xFF == ord('s'):
-            save_features(current_feature)
-            print("Unknown face saved.")
+        if label == "Unknown":
+            key = cv2.waitKey(1) & 0xFF  # 检测键盘输入
+            if key == ord('s'):  # 如果按下 's' 键
+                save_features(current_feature)  # 保存特征值
+                print("Unknown face saved.")
 
     # 显示结果
-    cv2.imshow("Face Detection", frame)
+    cv2.imshow("Face Detection", enhanced_frame)
 
     # 按下 'q' 键退出
     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -117,3 +131,4 @@ while True:
 # 释放资源
 cap.release()
 cv2.destroyAllWindows()
+
